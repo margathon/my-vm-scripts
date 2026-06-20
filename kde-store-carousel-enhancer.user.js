@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KDE Store — Preview Thumbnails & Vim Keys
 // @namespace    https://github.com/margathon/my-vm-scripts
-// @version      1.1.1
+// @version      1.1.2
 // @description  Thumbnail preview strip, vim-style navigation, and fixed full-viewport cinema mode for KDE Store previews
 // @author       margathon
 // @match        https://store.kde.org/*
@@ -292,17 +292,44 @@
     });
   }
 
-  function enableCinemaMode(mediaRoot) {
-    const shell = document.getElementById(SHELL_ID);
-
-    mediaRoot.classList.add('cinema-mode');
-    if (shell) {
-      shell.classList.remove('imgsmall');
-      shell.classList.add('imgfull');
-    }
-
+  function finishCinemaLock(mediaRoot) {
     applyViewportLock(mediaRoot);
     mediaRoot.querySelector('.swiper-container')?.swiper?.update();
+  }
+
+  function enableCinemaMode(mediaRoot) {
+    const shell = document.getElementById(SHELL_ID);
+    const inCinema = mediaRoot.classList.contains('cinema-mode')
+      && shell?.classList.contains('imgfull');
+
+    if (inCinema) {
+      finishCinemaLock(mediaRoot);
+      return;
+    }
+
+    const img = mediaRoot.querySelector('.swiper-slide-active .image-viewer img')
+      || mediaRoot.querySelector('.image-viewer img')
+      || mediaRoot.querySelector('img[id^="slide-img-"]');
+
+    if (!img) return;
+
+    img.click();
+
+    let attempts = 0;
+    const waitForCinema = () => {
+      const ready = mediaRoot.classList.contains('cinema-mode')
+        && document.getElementById(SHELL_ID)?.classList.contains('imgfull');
+
+      if (ready || attempts >= 40) {
+        finishCinemaLock(mediaRoot);
+        return;
+      }
+
+      attempts += 1;
+      setTimeout(waitForCinema, 50);
+    };
+
+    waitForCinema();
   }
 
   function bindViewportLock(mediaRoot, swiper) {
@@ -336,11 +363,10 @@
       const img = event.target.closest('.image-viewer img');
       if (!img) return;
 
+      if (!mediaRoot.classList.contains('cinema-mode')) return;
+
       event.preventDefault();
       event.stopImmediatePropagation();
-
-      mediaRoot.classList.add('cinema-mode');
-      document.getElementById(SHELL_ID)?.classList.replace('imgsmall', 'imgfull');
       lastHeight = 0;
       applyViewportLock(mediaRoot);
     }, true);
@@ -449,11 +475,13 @@
     hint.className = 'kde-keys-hint';
     hint.innerHTML = `
       <span class="kde-key">←</span>
-      <span class="kde-key">k</span>
+      <span class="kde-key">h</span>
+      <span class="kde-key">j</span>
       <span>prev</span>
       <span style="opacity:.35">·</span>
       <span class="kde-key">→</span>
-      <span class="kde-key">j</span>
+      <span class="kde-key">l</span>
+      <span class="kde-key">k</span>
       <span>next</span>
     `;
 
@@ -476,8 +504,8 @@
       const key = event.key;
       let direction = null;
 
-      if (key === 'ArrowRight' || key === 'j' || key === 'J') direction = 'next';
-      if (key === 'ArrowLeft' || key === 'k' || key === 'K') direction = 'prev';
+      if (key === 'ArrowRight' || key === 'l' || key === 'L' || key === 'k' || key === 'K') direction = 'next';
+      if (key === 'ArrowLeft' || key === 'h' || key === 'H' || key === 'j' || key === 'J') direction = 'prev';
       if (!direction) return;
 
       event.preventDefault();
@@ -507,8 +535,8 @@
     ENHANCED.add(container);
 
     const swiper = container.swiper || container.__swiper__;
-    enableCinemaMode(mediaRoot);
     bindViewportLock(mediaRoot, swiper);
+    enableCinemaMode(mediaRoot);
     const ui = buildThumbnailBar(mediaRoot, swiper, slides);
 
     const state = {
