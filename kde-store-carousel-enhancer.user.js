@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KDE Store — Preview Thumbnails & Vim Keys
 // @namespace    https://github.com/margathon/my-vm-scripts
-// @version      1.2.1
+// @version      1.2.2
 // @description  Thumbnail preview strip, vim-style navigation, and a fullscreen cinema overlay for KDE Store previews
 // @author       margathon
 // @match        https://store.kde.org/*
@@ -354,6 +354,9 @@
 
   function keysHintHtml() {
     return `
+      <span class="kde-key">f</span>
+      <span>fullscreen</span>
+      <span style="opacity:.35">·</span>
       <span class="kde-key">←</span>
       <span class="kde-key">h</span>
       <span class="kde-key">j</span>
@@ -447,8 +450,13 @@
     });
 
     const realIndex = state.swiper?.realIndex ?? state.swiper?.activeIndex ?? index;
-    ui.counterEl.innerHTML = `<strong>${realIndex + 1}</strong> / ${state.slides.length}`;
-    scrollThumbIntoView(ui.trackEl, ui.thumbButtons[realIndex]);
+    ui.counter.innerHTML = `<strong>${realIndex + 1}</strong> / ${state.slides.length}`;
+    scrollThumbIntoView(ui.track, ui.thumbButtons[realIndex]);
+  }
+
+  function toggleCinema(state) {
+    if (cinemaState === state) closeCinema();
+    else openCinema(state);
   }
 
   function getOrCreateOverlay() {
@@ -463,7 +471,7 @@
 
     const hint = document.createElement('div');
     hint.className = 'kde-cinema-hint';
-    hint.textContent = 'Esc to close';
+    hint.textContent = 'Esc or f to close';
 
     const stage = document.createElement('div');
     stage.className = 'kde-cinema-stage';
@@ -547,10 +555,18 @@
         return;
       }
 
+      const active = cinemaState || (window.__kdeCarouselActiveState ?? null);
+
+      if ((event.key === 'f' || event.key === 'F') && active) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleCinema(active);
+        return;
+      }
+
       const direction = directionFromKey(event.key);
       if (!direction) return;
 
-      const active = cinemaState || (window.__kdeCarouselActiveState ?? null);
       if (!active) return;
 
       event.preventDefault();
