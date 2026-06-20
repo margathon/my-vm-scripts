@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KDE Store — Preview Thumbnails & Vim Keys
 // @namespace    https://github.com/margathon/my-vm-scripts
-// @version      1.2.0
+// @version      1.2.1
 // @description  Thumbnail preview strip, vim-style navigation, and a fullscreen cinema overlay for KDE Store previews
 // @author       margathon
 // @match        https://store.kde.org/*
@@ -32,10 +32,12 @@
     ${MEDIA_ROOT} .kde-thumbs-bar,
     .kde-cinema-overlay .kde-thumbs-bar {
       position: absolute;
-      left: 14px;
-      right: 14px;
+      left: 50%;
+      right: auto;
       bottom: 12px;
       z-index: 30;
+      width: max-content;
+      max-width: calc(100% - 28px);
       padding: 10px 12px 8px;
       border-radius: 16px;
       background: linear-gradient(
@@ -51,7 +53,7 @@
       -webkit-backdrop-filter: blur(16px) saturate(130%);
       pointer-events: auto;
       opacity: 1;
-      transform: translateY(0);
+      transform: translateX(-50%) translateY(0);
       transition:
         opacity 280ms ease,
         transform 280ms ease;
@@ -63,17 +65,19 @@
 
     .kde-thumbs-bar.kde-thumbs-hidden {
       opacity: 0;
-      transform: translateY(10px);
+      transform: translateX(-50%) translateY(10px);
       pointer-events: none;
     }
 
     @keyframes kde-thumbs-in {
-      from { opacity: 0; transform: translateY(10px); }
-      to   { opacity: 1; transform: translateY(0); }
+      from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
     }
 
     ${MEDIA_ROOT} .kde-thumbs-track-wrap,
     .kde-cinema-overlay .kde-thumbs-track-wrap {
+      width: max-content;
+      max-width: 100%;
       overflow: hidden;
       mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
       -webkit-mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
@@ -83,6 +87,8 @@
     .kde-cinema-overlay .kde-thumbs-track {
       display: flex;
       gap: 8px;
+      width: max-content;
+      max-width: 100%;
       overflow-x: auto;
       scroll-behavior: smooth;
       padding: 2px 2px 6px;
@@ -151,7 +157,8 @@
     .kde-cinema-overlay .kde-thumbs-meta {
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: center;
+      flex-wrap: wrap;
       gap: 10px;
       margin-top: 4px;
       padding-top: 6px;
@@ -261,8 +268,7 @@
     @media (max-width: 720px) {
       ${MEDIA_ROOT} .kde-thumbs-bar,
       .kde-cinema-overlay .kde-thumbs-bar {
-        left: 8px;
-        right: 8px;
+        max-width: calc(100% - 16px);
         bottom: 8px;
         padding: 8px 8px 6px;
       }
