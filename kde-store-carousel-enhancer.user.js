@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         KDE Store — Preview Thumbnails & Vim Keys
 // @namespace    https://github.com/margathon/my-vm-scripts
-// @version      1.1.2
-// @description  Thumbnail preview strip, vim-style navigation, and fixed full-viewport cinema mode for KDE Store previews
+// @version      1.2.0
+// @description  Thumbnail preview strip, vim-style navigation, and a fullscreen cinema overlay for KDE Store previews
 // @author       margathon
 // @match        https://store.kde.org/*
 // @grant        GM_addStyle
@@ -17,46 +17,10 @@
   const ENHANCED = new WeakSet();
   const STYLE_ID = 'kde-store-carousel-enhancer-styles';
   const MEDIA_ROOT = '#media-slider';
-  const SHELL_ID = 'product-media-slider-container';
-  const VIEWPORT_LOCK_CLASS = 'kde-viewport-lock';
+  const OVERLAY_ID = 'kde-cinema-overlay';
+  const THUMB_HIDE_MS = 1000;
 
   const css = `
-    #${SHELL_ID}.kde-viewport-shell,
-    ${MEDIA_ROOT}.${VIEWPORT_LOCK_CLASS} {
-      width: 100% !important;
-      max-width: 100% !important;
-    }
-
-    ${MEDIA_ROOT}.${VIEWPORT_LOCK_CLASS},
-    ${MEDIA_ROOT}.${VIEWPORT_LOCK_CLASS} .swiper-container,
-    ${MEDIA_ROOT}.${VIEWPORT_LOCK_CLASS} .swiper-wrapper,
-    ${MEDIA_ROOT}.${VIEWPORT_LOCK_CLASS} .swiper-slide,
-    ${MEDIA_ROOT}.${VIEWPORT_LOCK_CLASS} .image-viewer {
-      height: var(--kde-preview-height) !important;
-      min-height: var(--kde-preview-height) !important;
-      max-height: var(--kde-preview-height) !important;
-      width: 100% !important;
-    }
-
-    ${MEDIA_ROOT}.${VIEWPORT_LOCK_CLASS} .image-viewer {
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      overflow: hidden !important;
-      background:
-        radial-gradient(1200px 500px at 50% 0%, rgba(61, 174, 233, 0.08), transparent 60%),
-        #0b0d10 !important;
-    }
-
-    ${MEDIA_ROOT}.${VIEWPORT_LOCK_CLASS} .image-viewer img {
-      width: 100% !important;
-      height: 100% !important;
-      max-width: 100% !important;
-      max-height: 100% !important;
-      object-fit: contain !important;
-      object-position: center center !important;
-    }
-
     ${MEDIA_ROOT} {
       position: relative !important;
     }
@@ -65,12 +29,8 @@
       display: none !important;
     }
 
-    ${MEDIA_ROOT} .carousel-control {
-      height: calc(100% - 96px) !important;
-      transition: height 220ms ease;
-    }
-
-    ${MEDIA_ROOT} .kde-thumbs-bar {
+    ${MEDIA_ROOT} .kde-thumbs-bar,
+    .kde-cinema-overlay .kde-thumbs-bar {
       position: absolute;
       left: 14px;
       right: 14px;
@@ -89,8 +49,22 @@
         inset 0 1px 0 rgba(255, 255, 255, 0.08);
       backdrop-filter: blur(16px) saturate(130%);
       -webkit-backdrop-filter: blur(16px) saturate(130%);
-      animation: kde-thumbs-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
       pointer-events: auto;
+      opacity: 1;
+      transform: translateY(0);
+      transition:
+        opacity 280ms ease,
+        transform 280ms ease;
+    }
+
+    ${MEDIA_ROOT} .kde-thumbs-bar {
+      animation: kde-thumbs-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .kde-thumbs-bar.kde-thumbs-hidden {
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
     }
 
     @keyframes kde-thumbs-in {
@@ -98,13 +72,15 @@
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    ${MEDIA_ROOT} .kde-thumbs-track-wrap {
+    ${MEDIA_ROOT} .kde-thumbs-track-wrap,
+    .kde-cinema-overlay .kde-thumbs-track-wrap {
       overflow: hidden;
       mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
       -webkit-mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
     }
 
-    ${MEDIA_ROOT} .kde-thumbs-track {
+    ${MEDIA_ROOT} .kde-thumbs-track,
+    .kde-cinema-overlay .kde-thumbs-track {
       display: flex;
       gap: 8px;
       overflow-x: auto;
@@ -114,16 +90,19 @@
       scrollbar-color: rgba(61, 174, 233, 0.45) transparent;
     }
 
-    ${MEDIA_ROOT} .kde-thumbs-track::-webkit-scrollbar {
+    ${MEDIA_ROOT} .kde-thumbs-track::-webkit-scrollbar,
+    .kde-cinema-overlay .kde-thumbs-track::-webkit-scrollbar {
       height: 5px;
     }
 
-    ${MEDIA_ROOT} .kde-thumbs-track::-webkit-scrollbar-thumb {
+    ${MEDIA_ROOT} .kde-thumbs-track::-webkit-scrollbar-thumb,
+    .kde-cinema-overlay .kde-thumbs-track::-webkit-scrollbar-thumb {
       background: rgba(61, 174, 233, 0.45);
       border-radius: 999px;
     }
 
-    ${MEDIA_ROOT} .kde-thumb {
+    ${MEDIA_ROOT} .kde-thumb,
+    .kde-cinema-overlay .kde-thumb {
       flex: 0 0 auto;
       position: relative;
       width: 68px;
@@ -142,13 +121,15 @@
       opacity: 0.7;
     }
 
-    ${MEDIA_ROOT} .kde-thumb:hover {
+    ${MEDIA_ROOT} .kde-thumb:hover,
+    .kde-cinema-overlay .kde-thumb:hover {
       opacity: 1;
       transform: translateY(-2px);
       border-color: rgba(255, 255, 255, 0.32);
     }
 
-    ${MEDIA_ROOT} .kde-thumb.is-active {
+    ${MEDIA_ROOT} .kde-thumb.is-active,
+    .kde-cinema-overlay .kde-thumb.is-active {
       opacity: 1;
       border-color: #3daee9;
       box-shadow:
@@ -157,7 +138,8 @@
       transform: translateY(-2px) scale(1.04);
     }
 
-    ${MEDIA_ROOT} .kde-thumb img {
+    ${MEDIA_ROOT} .kde-thumb img,
+    .kde-cinema-overlay .kde-thumb img {
       width: 100%;
       height: 100%;
       object-fit: cover;
@@ -165,7 +147,8 @@
       pointer-events: none;
     }
 
-    ${MEDIA_ROOT} .kde-thumbs-meta {
+    ${MEDIA_ROOT} .kde-thumbs-meta,
+    .kde-cinema-overlay .kde-thumbs-meta {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -177,25 +160,29 @@
       color: rgba(255, 255, 255, 0.58);
     }
 
-    ${MEDIA_ROOT} .kde-counter {
+    ${MEDIA_ROOT} .kde-counter,
+    .kde-cinema-overlay .kde-counter {
       color: rgba(255, 255, 255, 0.92);
       font-weight: 650;
       font-variant-numeric: tabular-nums;
     }
 
-    ${MEDIA_ROOT} .kde-counter strong {
+    ${MEDIA_ROOT} .kde-counter strong,
+    .kde-cinema-overlay .kde-counter strong {
       color: #7fd3ff;
       font-size: 12px;
     }
 
-    ${MEDIA_ROOT} .kde-keys-hint {
+    ${MEDIA_ROOT} .kde-keys-hint,
+    .kde-cinema-overlay .kde-keys-hint {
       display: inline-flex;
       align-items: center;
       gap: 5px;
       white-space: nowrap;
     }
 
-    ${MEDIA_ROOT} .kde-key {
+    ${MEDIA_ROOT} .kde-key,
+    .kde-cinema-overlay .kde-key {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -210,24 +197,95 @@
       box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.22);
     }
 
+    .kde-cinema-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483000;
+      display: none;
+      flex-direction: column;
+      background:
+        radial-gradient(1200px 600px at 50% 0%, rgba(61, 174, 233, 0.1), transparent 55%),
+        rgba(6, 8, 12, 0.96);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    .kde-cinema-overlay.is-open {
+      display: flex;
+    }
+
+    body.kde-cinema-open {
+      overflow: hidden !important;
+    }
+
+    .kde-cinema-stage {
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 0;
+      width: 100%;
+      padding: 20px 24px 108px;
+      box-sizing: border-box;
+    }
+
+    .kde-cinema-image-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+    }
+
+    .kde-cinema-image {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 100%;
+      object-fit: contain;
+      object-position: center center;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    .kde-cinema-hint {
+      position: absolute;
+      top: 16px;
+      right: 18px;
+      z-index: 2;
+      font: 500 11px/1.2 "Noto Sans", "Segoe UI", system-ui, sans-serif;
+      color: rgba(255, 255, 255, 0.45);
+      pointer-events: none;
+    }
+
     @media (max-width: 720px) {
-      ${MEDIA_ROOT} .kde-thumbs-bar {
+      ${MEDIA_ROOT} .kde-thumbs-bar,
+      .kde-cinema-overlay .kde-thumbs-bar {
         left: 8px;
         right: 8px;
         bottom: 8px;
         padding: 8px 8px 6px;
       }
 
-      ${MEDIA_ROOT} .kde-thumb {
+      ${MEDIA_ROOT} .kde-thumb,
+      .kde-cinema-overlay .kde-thumb {
         width: 56px;
         height: 38px;
       }
 
-      ${MEDIA_ROOT} .kde-keys-hint span:not(.kde-key) {
+      ${MEDIA_ROOT} .kde-keys-hint span:not(.kde-key),
+      .kde-cinema-overlay .kde-keys-hint span:not(.kde-key) {
         display: none;
+      }
+
+      .kde-cinema-stage {
+        padding: 16px 12px 96px;
       }
     }
   `;
+
+  let cinemaState = null;
+  let overlayEl = null;
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -239,142 +297,6 @@
     style.id = STYLE_ID;
     style.textContent = css;
     document.documentElement.appendChild(style);
-  }
-
-  function viewportHeight() {
-    const header = document.getElementById('site-header-container');
-    const headerHeight = header?.getBoundingClientRect().height ?? 140;
-    return Math.max(420, window.innerHeight - headerHeight);
-  }
-
-  function setViewportCssVar(height) {
-    document.documentElement.style.setProperty('--kde-preview-height', `${height}px`);
-  }
-
-  const lockState = new WeakMap();
-
-  function setLockedStyle(el, prop, value) {
-    const cache = lockState.get(el) || {};
-    if (cache[prop] === value) return;
-    cache[prop] = value;
-    lockState.set(el, cache);
-    el.style.setProperty(prop, value, 'important');
-  }
-
-  function applyViewportLock(mediaRoot) {
-    const shell = document.getElementById(SHELL_ID);
-    const height = viewportHeight();
-    const heightPx = `${height}px`;
-
-    setViewportCssVar(height);
-    mediaRoot.classList.add(VIEWPORT_LOCK_CLASS);
-    shell?.classList.add('kde-viewport-shell');
-
-    for (const el of [shell, mediaRoot]) {
-      if (!el) continue;
-      setLockedStyle(el, 'height', heightPx);
-      setLockedStyle(el, 'min-height', heightPx);
-      setLockedStyle(el, 'max-height', heightPx);
-      setLockedStyle(el, 'width', '100%');
-    }
-
-    mediaRoot.querySelectorAll('.swiper-container, .swiper-wrapper, .swiper-slide, .image-viewer').forEach((el) => {
-      setLockedStyle(el, 'height', heightPx);
-      setLockedStyle(el, 'width', '100%');
-    });
-
-    mediaRoot.querySelectorAll('.image-viewer img').forEach((img) => {
-      setLockedStyle(img, 'width', '100%');
-      setLockedStyle(img, 'height', '100%');
-      setLockedStyle(img, 'object-fit', 'contain');
-      setLockedStyle(img, 'max-width', '100%');
-      setLockedStyle(img, 'max-height', '100%');
-    });
-  }
-
-  function finishCinemaLock(mediaRoot) {
-    applyViewportLock(mediaRoot);
-    mediaRoot.querySelector('.swiper-container')?.swiper?.update();
-  }
-
-  function enableCinemaMode(mediaRoot) {
-    const shell = document.getElementById(SHELL_ID);
-    const inCinema = mediaRoot.classList.contains('cinema-mode')
-      && shell?.classList.contains('imgfull');
-
-    if (inCinema) {
-      finishCinemaLock(mediaRoot);
-      return;
-    }
-
-    const img = mediaRoot.querySelector('.swiper-slide-active .image-viewer img')
-      || mediaRoot.querySelector('.image-viewer img')
-      || mediaRoot.querySelector('img[id^="slide-img-"]');
-
-    if (!img) return;
-
-    img.click();
-
-    let attempts = 0;
-    const waitForCinema = () => {
-      const ready = mediaRoot.classList.contains('cinema-mode')
-        && document.getElementById(SHELL_ID)?.classList.contains('imgfull');
-
-      if (ready || attempts >= 40) {
-        finishCinemaLock(mediaRoot);
-        return;
-      }
-
-      attempts += 1;
-      setTimeout(waitForCinema, 50);
-    };
-
-    waitForCinema();
-  }
-
-  function bindViewportLock(mediaRoot, swiper) {
-    let lockRaf = 0;
-    let lockTimer = 0;
-    let lastHeight = 0;
-
-    const scheduleLock = () => {
-      if (lockRaf) return;
-      lockRaf = requestAnimationFrame(() => {
-        lockRaf = 0;
-        const height = viewportHeight();
-        if (height !== lastHeight) {
-          lastHeight = height;
-          applyViewportLock(mediaRoot);
-        }
-      });
-    };
-
-    const scheduleLockAfterTransition = () => {
-      clearTimeout(lockTimer);
-      lockTimer = setTimeout(() => {
-        lastHeight = 0;
-        applyViewportLock(mediaRoot);
-      }, 150);
-    };
-
-    window.addEventListener('resize', scheduleLock, { passive: true });
-
-    mediaRoot.addEventListener('click', (event) => {
-      const img = event.target.closest('.image-viewer img');
-      if (!img) return;
-
-      if (!mediaRoot.classList.contains('cinema-mode')) return;
-
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      lastHeight = 0;
-      applyViewportLock(mediaRoot);
-    }, true);
-
-    if (swiper) {
-      swiper.on('slideChangeTransitionEnd', scheduleLockAfterTransition);
-      swiper.on('resize', scheduleLock);
-    }
   }
 
   function isTypingTarget(el) {
@@ -424,8 +346,38 @@
     mediaRoot.querySelector(selector)?.click();
   }
 
-  function buildThumbnailBar(mediaRoot, swiper, slides) {
-    mediaRoot.querySelector('.kde-thumbs-bar')?.remove();
+  function keysHintHtml() {
+    return `
+      <span class="kde-key">←</span>
+      <span class="kde-key">h</span>
+      <span class="kde-key">j</span>
+      <span>prev</span>
+      <span style="opacity:.35">·</span>
+      <span class="kde-key">→</span>
+      <span class="kde-key">l</span>
+      <span class="kde-key">k</span>
+      <span>next</span>
+    `;
+  }
+
+  function bindThumbAutohide(bar, hoverRoot) {
+    let hideTimer = 0;
+
+    const show = () => {
+      bar.classList.remove('kde-thumbs-hidden');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        bar.classList.add('kde-thumbs-hidden');
+      }, THUMB_HIDE_MS);
+    };
+
+    hoverRoot.addEventListener('mousemove', show, { passive: true });
+    hoverRoot.addEventListener('mouseenter', show, { passive: true });
+    show();
+  }
+
+  function buildThumbnailBar(parent, swiper, slides, onSelect) {
+    parent.querySelector(':scope > .kde-thumbs-bar')?.remove();
     if (slides.length <= 1) return null;
 
     const bar = document.createElement('div');
@@ -456,7 +408,7 @@
       btn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (swiper) swiper.slideTo(i);
+        onSelect(i);
       });
 
       track.appendChild(btn);
@@ -473,55 +425,154 @@
 
     const hint = document.createElement('span');
     hint.className = 'kde-keys-hint';
-    hint.innerHTML = `
-      <span class="kde-key">←</span>
-      <span class="kde-key">h</span>
-      <span class="kde-key">j</span>
-      <span>prev</span>
-      <span style="opacity:.35">·</span>
-      <span class="kde-key">→</span>
-      <span class="kde-key">l</span>
-      <span class="kde-key">k</span>
-      <span>next</span>
-    `;
+    hint.innerHTML = keysHintHtml();
 
     meta.append(counter, hint);
     bar.append(trackWrap, meta);
-    mediaRoot.appendChild(bar);
+    parent.appendChild(bar);
 
     return { bar, track, counter, thumbButtons };
   }
 
-  function bindKeyboard(state) {
-    if (state.keyboardBound) return;
-    state.keyboardBound = true;
-
-    document.addEventListener('keydown', (event) => {
-      if (!state.active) return;
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (isTypingTarget(document.activeElement)) return;
-
-      const key = event.key;
-      let direction = null;
-
-      if (key === 'ArrowRight' || key === 'l' || key === 'L' || key === 'k' || key === 'K') direction = 'next';
-      if (key === 'ArrowLeft' || key === 'h' || key === 'H' || key === 'j' || key === 'J') direction = 'prev';
-      if (!direction) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      navigate(state.swiper, state.mediaRoot, direction);
-    }, true);
-  }
-
-  function setActiveThumb(state, index) {
-    state.thumbButtons.forEach((btn, i) => {
+  function setActiveThumb(ui, state, index) {
+    if (!ui) return;
+    ui.thumbButtons.forEach((btn, i) => {
       btn.classList.toggle('is-active', i === index);
     });
 
     const realIndex = state.swiper?.realIndex ?? state.swiper?.activeIndex ?? index;
-    state.counterEl.innerHTML = `<strong>${realIndex + 1}</strong> / ${state.slides.length}`;
-    scrollThumbIntoView(state.trackEl, state.thumbButtons[realIndex]);
+    ui.counterEl.innerHTML = `<strong>${realIndex + 1}</strong> / ${state.slides.length}`;
+    scrollThumbIntoView(ui.trackEl, ui.thumbButtons[realIndex]);
+  }
+
+  function getOrCreateOverlay() {
+    if (overlayEl) return overlayEl;
+
+    overlayEl = document.createElement('div');
+    overlayEl.id = OVERLAY_ID;
+    overlayEl.className = 'kde-cinema-overlay';
+    overlayEl.setAttribute('role', 'dialog');
+    overlayEl.setAttribute('aria-modal', 'true');
+    overlayEl.setAttribute('aria-label', 'Fullscreen preview');
+
+    const hint = document.createElement('div');
+    hint.className = 'kde-cinema-hint';
+    hint.textContent = 'Esc to close';
+
+    const stage = document.createElement('div');
+    stage.className = 'kde-cinema-stage';
+
+    const imageWrap = document.createElement('div');
+    imageWrap.className = 'kde-cinema-image-wrap';
+
+    const image = document.createElement('img');
+    image.className = 'kde-cinema-image';
+    image.alt = '';
+
+    imageWrap.appendChild(image);
+    stage.appendChild(imageWrap);
+    overlayEl.append(hint, stage);
+    document.body.appendChild(overlayEl);
+
+    overlayEl.addEventListener('click', (event) => {
+      if (event.target.closest('.kde-thumbs-bar, .kde-cinema-image')) return;
+      if (event.target === overlayEl || event.target.closest('.kde-cinema-stage, .kde-cinema-image-wrap')) {
+        closeCinema();
+      }
+    });
+
+    return overlayEl;
+  }
+
+  function refreshCinemaImage() {
+    if (!cinemaState || !overlayEl) return;
+    const idx = cinemaState.swiper?.realIndex ?? cinemaState.swiper?.activeIndex ?? 0;
+    const slide = cinemaState.slides[idx];
+    const image = overlayEl.querySelector('.kde-cinema-image');
+    if (slide && image) image.src = slide.src;
+    setActiveThumb(cinemaState.cinemaUi, cinemaState, idx);
+    if (cinemaState.ui) setActiveThumb(cinemaState.ui, cinemaState, idx);
+  }
+
+  function openCinema(state) {
+    cinemaState = state;
+    const overlay = getOrCreateOverlay();
+
+    if (!state.cinemaUi) {
+      state.cinemaUi = buildThumbnailBar(overlay, state.swiper, state.slides, (index) => {
+        state.swiper?.slideTo(index);
+        refreshCinemaImage();
+      });
+      if (state.cinemaUi) {
+        bindThumbAutohide(state.cinemaUi.bar, overlay);
+      }
+    }
+
+    refreshCinemaImage();
+    overlay.classList.add('is-open');
+    document.body.classList.add('kde-cinema-open');
+    state.cinemaUi?.bar.classList.remove('kde-thumbs-hidden');
+  }
+
+  function closeCinema() {
+    overlayEl?.classList.remove('is-open');
+    document.body.classList.remove('kde-cinema-open');
+    cinemaState = null;
+  }
+
+  function directionFromKey(key) {
+    if (key === 'ArrowRight' || key === 'l' || key === 'L' || key === 'k' || key === 'K') return 'next';
+    if (key === 'ArrowLeft' || key === 'h' || key === 'H' || key === 'j' || key === 'J') return 'prev';
+    return null;
+  }
+
+  function bindGlobalKeyboard() {
+    if (bindGlobalKeyboard.bound) return;
+    bindGlobalKeyboard.bound = true;
+
+    document.addEventListener('keydown', (event) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isTypingTarget(document.activeElement)) return;
+
+      if (event.key === 'Escape' && cinemaState) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeCinema();
+        return;
+      }
+
+      const direction = directionFromKey(event.key);
+      if (!direction) return;
+
+      const active = cinemaState || (window.__kdeCarouselActiveState ?? null);
+      if (!active) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      navigate(active.swiper, active.mediaRoot, direction);
+
+      if (cinemaState) refreshCinemaImage();
+      else if (active.ui) {
+        const idx = active.swiper?.realIndex ?? active.swiper?.activeIndex ?? 0;
+        setActiveThumb(active.ui, active, idx);
+      }
+    }, true);
+  }
+
+  function bindCarouselKeyboard(state) {
+    bindGlobalKeyboard();
+    window.__kdeCarouselActiveState = state;
+  }
+
+  function bindCinemaOpen(state) {
+    state.mediaRoot.addEventListener('click', (event) => {
+      const img = event.target.closest('.image-viewer img');
+      if (!img) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      openCinema(state);
+    }, true);
   }
 
   function enhanceMediaSlider(mediaRoot) {
@@ -535,27 +586,32 @@
     ENHANCED.add(container);
 
     const swiper = container.swiper || container.__swiper__;
-    bindViewportLock(mediaRoot, swiper);
-    enableCinemaMode(mediaRoot);
-    const ui = buildThumbnailBar(mediaRoot, swiper, slides);
+    const ui = buildThumbnailBar(mediaRoot, swiper, slides, (index) => {
+      swiper?.slideTo(index);
+      const idx = swiper?.realIndex ?? swiper?.activeIndex ?? index;
+      setActiveThumb(ui, { swiper, slides }, idx);
+    });
 
     const state = {
       mediaRoot,
       container,
       swiper,
       slides,
-      active: false,
-      keyboardBound: false,
-      trackEl: ui?.track ?? null,
-      counterEl: ui?.counter ?? null,
-      thumbButtons: ui?.thumbButtons ?? [],
+      ui,
+      cinemaUi: null,
     };
 
-    bindKeyboard(state);
+    bindCarouselKeyboard(state);
+    bindCinemaOpen(state);
+
+    if (ui) {
+      bindThumbAutohide(ui.bar, mediaRoot);
+    }
 
     const sync = () => {
       const idx = swiper?.realIndex ?? swiper?.activeIndex ?? 0;
-      if (ui) setActiveThumb(state, idx);
+      if (ui) setActiveThumb(ui, state, idx);
+      if (cinemaState === state) refreshCinemaImage();
     };
 
     sync();
@@ -565,26 +621,25 @@
       swiper.on('slideChangeTransitionEnd', sync);
     }
 
-    const setActive = (active) => {
-      state.active = active;
-      mediaRoot.classList.toggle('kde-thumbs-active', active);
+    const setCarouselActive = (active) => {
+      if (active) window.__kdeCarouselActiveState = state;
     };
 
     const visibilityObserver = new IntersectionObserver((entries) => {
-      setActive(entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.35));
+      setCarouselActive(entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.35));
     }, { threshold: [0, 0.35, 0.6] });
 
     visibilityObserver.observe(mediaRoot);
 
-    mediaRoot.addEventListener('mouseenter', () => setActive(true));
+    mediaRoot.addEventListener('mouseenter', () => setCarouselActive(true));
     mediaRoot.addEventListener('mouseleave', () => {
       const rect = mediaRoot.getBoundingClientRect();
       const inView = rect.top < window.innerHeight && rect.bottom > 0;
-      setActive(inView && rect.top < window.innerHeight * 0.75);
+      setCarouselActive(inView && rect.top < window.innerHeight * 0.75);
     });
 
     mediaRoot.setAttribute('tabindex', '0');
-    mediaRoot.addEventListener('focusin', () => setActive(true));
+    mediaRoot.addEventListener('focusin', () => setCarouselActive(true));
   }
 
   function scan(root = document) {
@@ -596,9 +651,9 @@
     scan();
 
     let scanTimer = 0;
-    const scheduleScan = (root) => {
+    const scheduleScan = () => {
       clearTimeout(scanTimer);
-      scanTimer = setTimeout(() => scan(root), 100);
+      scanTimer = setTimeout(() => scan(document), 100);
     };
 
     const observer = new MutationObserver((mutations) => {
@@ -613,7 +668,7 @@
         }
         if (needsScan) break;
       }
-      if (needsScan) scheduleScan(document);
+      if (needsScan) scheduleScan();
     });
 
     observer.observe(document.documentElement, { childList: true, subtree: true });
