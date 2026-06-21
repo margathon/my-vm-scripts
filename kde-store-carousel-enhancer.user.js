@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KDE Store — Preview Thumbnails & Vim Keys
 // @namespace    https://github.com/margathon/my-vm-scripts
-// @version      1.2.2
+// @version      1.3.0
 // @description  Thumbnail preview strip, vim-style navigation, and a fullscreen cinema overlay for KDE Store previews
 // @author       margathon
 // @match        https://store.kde.org/*
@@ -15,8 +15,10 @@
   'use strict';
 
   const ENHANCED = new WeakSet();
+  const BROWSE_ENHANCED = new WeakSet();
   const STYLE_ID = 'kde-store-carousel-enhancer-styles';
   const MEDIA_ROOT = '#media-slider';
+  const BROWSE_ROOT = '#product-browse';
   const OVERLAY_ID = 'kde-cinema-overlay';
   const THUMB_HIDE_MS = 1000;
 
@@ -225,6 +227,31 @@
       overflow: hidden !important;
     }
 
+    .kde-cinema-title {
+      position: absolute;
+      top: 16px;
+      left: 18px;
+      right: 140px;
+      z-index: 2;
+      font: 600 15px/1.3 "Noto Sans", "Segoe UI", system-ui, sans-serif;
+      color: rgba(255, 255, 255, 0.88);
+      pointer-events: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .kde-cinema-hint {
+      position: absolute;
+      top: 16px;
+      right: 18px;
+      z-index: 2;
+      font: 500 11px/1.2 "Noto Sans", "Segoe UI", system-ui, sans-serif;
+      color: rgba(255, 255, 255, 0.45);
+      pointer-events: none;
+      text-align: right;
+    }
+
     .kde-cinema-stage {
       flex: 1 1 auto;
       display: flex;
@@ -232,7 +259,7 @@
       justify-content: center;
       min-height: 0;
       width: 100%;
-      padding: 20px 24px 108px;
+      padding: 48px 24px 108px;
       box-sizing: border-box;
     }
 
@@ -255,14 +282,10 @@
       -webkit-user-drag: none;
     }
 
-    .kde-cinema-hint {
-      position: absolute;
-      top: 16px;
-      right: 18px;
-      z-index: 2;
-      font: 500 11px/1.2 "Noto Sans", "Segoe UI", system-ui, sans-serif;
-      color: rgba(255, 255, 255, 0.45);
-      pointer-events: none;
+    .product-browse-item-picture.kde-browse-active {
+      outline: 2px solid rgba(61, 174, 233, 0.75);
+      outline-offset: 2px;
+      border-radius: 8px;
     }
 
     @media (max-width: 720px) {
@@ -285,7 +308,7 @@
       }
 
       .kde-cinema-stage {
-        padding: 16px 12px 96px;
+        padding: 40px 12px 96px;
       }
     }
   `;
@@ -311,10 +334,15 @@
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
   }
 
+  function upscaleImageUrl(url) {
+    if (!url) return url;
+    return url.replace(/\/cache\/\d+x\d+\//, '/img/').replace('://images.pling.com/cache/', '://images.pling.com/img/');
+  }
+
   function mediaFromSlide(slide) {
     const img = slide.querySelector('.image-viewer img, img');
     if (!img?.src) return null;
-    return { src: img.currentSrc || img.src };
+    return { src: upscaleImageUrl(img.currentSrc || img.src) };
   }
 
   function collectSlides(container) {
@@ -325,6 +353,39 @@
         return { index, slide, ...media };
       })
       .filter(Boolean);
+  }
+
+  function collectBrowseItems() {
+    return [...document.querySelectorAll('.product-browse-item-picture')]
+      .map((element, index) => {
+        const link = element.querySelector('a[href*="/p/"]');
+        const img = element.querySelector('img');
+        const id = link?.href.match(/\/p\/(\d+)/)?.[1];
+        if (!id || !img?.src) return null;
+        return {
+          index,
+          id,
+          href: link.href,
+          title: element.querySelector('h2')?.textContent?.trim() || `Product ${id}`,
+          previewSrc: upscaleImageUrl(img.currentSrc || img.src),
+          element,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  async function fetchProductGallery(productId) {
+    const res = await fetch(`/p/${productId}`, { credentials: 'same-origin' });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const match = html.match(/productViewDataEncoded\s*=\s*["']([^"']+)["']/);
+    if (!match) return null;
+    const data = JSON.parse(atob(match[1]));
+    const slides = (data.pics || []).map((src) => ({ src: upscaleImageUrl(src) }));
+    return {
+      title: data.product?.title || '',
+      slides: slides.length ? slides : null,
+    };
   }
 
   function scrollThumbIntoView(track, button) {
@@ -338,34 +399,35 @@
     }
   }
 
-  function navigate(swiper, mediaRoot, direction) {
-    if (swiper) {
-      if (direction === 'next') swiper.slideNext();
-      else swiper.slidePrev();
-      return;
+  function currentSlideIndex(state) {
+    if (state.swiper) {
+      return state.swiper.realIndex ?? state.swiper.activeIndex ?? state.slideIndex ?? 0;
     }
-
-    const selector = direction === 'next'
-      ? '.carousel-control-right'
-      : '.carousel-control-left';
-
-    mediaRoot.querySelector(selector)?.click();
+    return state.slideIndex ?? 0;
   }
 
-  function keysHintHtml() {
+  function keysHintHtml(browseMode) {
+    if (browseMode) {
+      return `
+        <span class="kde-key">f</span>
+        <span>close</span>
+        <span style="opacity:.35">·</span>
+        <span class="kde-key">h</span>
+        <span class="kde-key">l</span>
+        <span>image</span>
+        <span style="opacity:.35">·</span>
+        <span class="kde-key">j</span>
+        <span class="kde-key">k</span>
+        <span>theme</span>
+      `;
+    }
     return `
       <span class="kde-key">f</span>
       <span>fullscreen</span>
       <span style="opacity:.35">·</span>
-      <span class="kde-key">←</span>
       <span class="kde-key">h</span>
-      <span class="kde-key">j</span>
-      <span>prev</span>
-      <span style="opacity:.35">·</span>
-      <span class="kde-key">→</span>
       <span class="kde-key">l</span>
-      <span class="kde-key">k</span>
-      <span>next</span>
+      <span>prev/next</span>
     `;
   }
 
@@ -383,9 +445,11 @@
     hoverRoot.addEventListener('mousemove', show, { passive: true });
     hoverRoot.addEventListener('mouseenter', show, { passive: true });
     show();
+
+    return { show };
   }
 
-  function buildThumbnailBar(parent, swiper, slides, onSelect) {
+  function buildThumbnailBar(parent, slides, onSelect, options = {}) {
     parent.querySelector(':scope > .kde-thumbs-bar')?.remove();
     if (slides.length <= 1) return null;
 
@@ -434,7 +498,7 @@
 
     const hint = document.createElement('span');
     hint.className = 'kde-keys-hint';
-    hint.innerHTML = keysHintHtml();
+    hint.innerHTML = keysHintHtml(options.browseMode);
 
     meta.append(counter, hint);
     bar.append(trackWrap, meta);
@@ -445,18 +509,17 @@
 
   function setActiveThumb(ui, state, index) {
     if (!ui) return;
+    const idx = index ?? currentSlideIndex(state);
     ui.thumbButtons.forEach((btn, i) => {
-      btn.classList.toggle('is-active', i === index);
+      btn.classList.toggle('is-active', i === idx);
     });
-
-    const realIndex = state.swiper?.realIndex ?? state.swiper?.activeIndex ?? index;
-    ui.counter.innerHTML = `<strong>${realIndex + 1}</strong> / ${state.slides.length}`;
-    scrollThumbIntoView(ui.track, ui.thumbButtons[realIndex]);
+    ui.counter.innerHTML = `<strong>${idx + 1}</strong> / ${state.slides.length}`;
+    scrollThumbIntoView(ui.track, ui.thumbButtons[idx]);
   }
 
-  function toggleCinema(state) {
-    if (cinemaState === state) closeCinema();
-    else openCinema(state);
+  function revealThumbs(state) {
+    state.ui?.autohide?.show();
+    state.cinemaUi?.autohide?.show();
   }
 
   function getOrCreateOverlay() {
@@ -468,6 +531,9 @@
     overlayEl.setAttribute('role', 'dialog');
     overlayEl.setAttribute('aria-modal', 'true');
     overlayEl.setAttribute('aria-label', 'Fullscreen preview');
+
+    const title = document.createElement('div');
+    title.className = 'kde-cinema-title';
 
     const hint = document.createElement('div');
     hint.className = 'kde-cinema-hint';
@@ -485,7 +551,7 @@
 
     imageWrap.appendChild(image);
     stage.appendChild(imageWrap);
-    overlayEl.append(hint, stage);
+    overlayEl.append(title, hint, stage);
     document.body.appendChild(overlayEl);
 
     overlayEl.addEventListener('click', (event) => {
@@ -498,46 +564,143 @@
     return overlayEl;
   }
 
-  function refreshCinemaImage() {
+  function rebuildCinemaThumbs(state) {
+    const overlay = getOrCreateOverlay();
+    state.cinemaUi = buildThumbnailBar(overlay, state.slides, (index) => {
+      goToSlide(state, index);
+      refreshViewer();
+      revealThumbs(state);
+    }, { browseMode: state.kind === 'browse' });
+
+    if (state.cinemaUi) {
+      state.cinemaUi.autohide = bindThumbAutohide(state.cinemaUi.bar, overlay);
+    }
+  }
+
+  function updateBrowseHighlight(state) {
+    if (state.kind !== 'browse') return;
+    state.browseItems.forEach((item, i) => {
+      item.element.classList.toggle('kde-browse-active', i === state.browseIndex);
+    });
+    state.browseItems[state.browseIndex]?.element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function refreshViewer() {
     if (!cinemaState || !overlayEl) return;
-    const idx = cinemaState.swiper?.realIndex ?? cinemaState.swiper?.activeIndex ?? 0;
-    const slide = cinemaState.slides[idx];
+    const state = cinemaState;
+    const idx = currentSlideIndex(state);
+    const slide = state.slides[idx];
     const image = overlayEl.querySelector('.kde-cinema-image');
+    const title = overlayEl.querySelector('.kde-cinema-title');
+
     if (slide && image) image.src = slide.src;
-    setActiveThumb(cinemaState.cinemaUi, cinemaState, idx);
-    if (cinemaState.ui) setActiveThumb(cinemaState.ui, cinemaState, idx);
+    if (title) {
+      if (state.kind === 'browse') {
+        title.textContent = `${state.title || ''} (${state.browseIndex + 1}/${state.browseItems.length})`;
+      } else {
+        title.textContent = state.title || '';
+      }
+    }
+
+    setActiveThumb(state.cinemaUi, state, idx);
+    setActiveThumb(state.ui, state, idx);
+  }
+
+  async function loadBrowseItem(state) {
+    const item = state.browseItems[state.browseIndex];
+    if (!item) return;
+
+    state.title = item.title;
+    state.slides = [{ src: item.previewSrc }];
+    state.slideIndex = 0;
+    updateBrowseHighlight(state);
+    rebuildCinemaThumbs(state);
+    refreshViewer();
+
+    const gallery = await fetchProductGallery(item.id);
+    if (cinemaState !== state) return;
+    if (gallery?.slides?.length) {
+      state.slides = gallery.slides;
+      if (gallery.title) state.title = gallery.title;
+      rebuildCinemaThumbs(state);
+      refreshViewer();
+    }
+  }
+
+  function goToSlide(state, index) {
+    state.slideIndex = index;
+    if (state.swiper) state.swiper.slideTo(index);
+  }
+
+  function navigateHorizontal(state, direction) {
+    const delta = direction === 'next' ? 1 : -1;
+    const count = state.slides.length;
+    if (count <= 1) return false;
+
+    let idx = currentSlideIndex(state) + delta;
+    if (idx < 0) idx = count - 1;
+    if (idx >= count) idx = 0;
+
+    goToSlide(state, idx);
+    return true;
+  }
+
+  function navigateBrowseItem(state, direction) {
+    const delta = direction === 'next' ? 1 : -1;
+    const next = state.browseIndex + delta;
+    if (next < 0 || next >= state.browseItems.length) return false;
+    state.browseIndex = next;
+    loadBrowseItem(state);
+    return true;
   }
 
   function openCinema(state) {
     cinemaState = state;
     const overlay = getOrCreateOverlay();
 
-    if (!state.cinemaUi) {
-      state.cinemaUi = buildThumbnailBar(overlay, state.swiper, state.slides, (index) => {
-        state.swiper?.slideTo(index);
-        refreshCinemaImage();
-      });
-      if (state.cinemaUi) {
-        bindThumbAutohide(state.cinemaUi.bar, overlay);
-      }
+    if (!state.cinemaUi) rebuildCinemaThumbs(state);
+
+    if (state.kind === 'browse') {
+      loadBrowseItem(state);
+    } else {
+      refreshViewer();
     }
 
-    refreshCinemaImage();
     overlay.classList.add('is-open');
     document.body.classList.add('kde-cinema-open');
-    state.cinemaUi?.bar.classList.remove('kde-thumbs-hidden');
+    revealThumbs(state);
   }
 
   function closeCinema() {
+    if (cinemaState?.kind === 'browse') {
+      cinemaState.browseItems.forEach((item) => {
+        item.element.classList.remove('kde-browse-active');
+      });
+    }
     overlayEl?.classList.remove('is-open');
     document.body.classList.remove('kde-cinema-open');
     cinemaState = null;
   }
 
-  function directionFromKey(key) {
-    if (key === 'ArrowRight' || key === 'l' || key === 'L' || key === 'k' || key === 'K') return 'next';
-    if (key === 'ArrowLeft' || key === 'h' || key === 'H' || key === 'j' || key === 'J') return 'prev';
+  function toggleCinema(state) {
+    if (cinemaState === state) closeCinema();
+    else openCinema(state);
+  }
+
+  function horizontalFromKey(key) {
+    if (key === 'ArrowRight' || key === 'l' || key === 'L') return 'next';
+    if (key === 'ArrowLeft' || key === 'h' || key === 'H') return 'prev';
     return null;
+  }
+
+  function verticalFromKey(key) {
+    if (key === 'ArrowDown' || key === 'j' || key === 'J') return 'next';
+    if (key === 'ArrowUp' || key === 'k' || key === 'K') return 'prev';
+    return null;
+  }
+
+  function activeViewerState() {
+    return cinemaState || window.__kdeCarouselActiveState || window.__kdeBrowseActiveState || null;
   }
 
   function bindGlobalKeyboard() {
@@ -555,41 +718,51 @@
         return;
       }
 
-      const active = cinemaState || (window.__kdeCarouselActiveState ?? null);
+      const active = activeViewerState();
+      if (!active) return;
 
-      if ((event.key === 'f' || event.key === 'F') && active) {
+      if (event.key === 'f' || event.key === 'F') {
         event.preventDefault();
         event.stopPropagation();
         toggleCinema(active);
         return;
       }
 
-      const direction = directionFromKey(event.key);
-      if (!direction) return;
+      const horizontal = horizontalFromKey(event.key);
+      const vertical = verticalFromKey(event.key);
 
-      if (!active) return;
+      if (!horizontal && !vertical) return;
+
+      let handled = false;
+
+      if (horizontal) {
+        handled = navigateHorizontal(active, horizontal);
+      }
+
+      if (vertical && active.kind === 'browse' && cinemaState === active) {
+        handled = navigateBrowseItem(active, vertical) || handled;
+      }
+
+      if (!handled) return;
 
       event.preventDefault();
       event.stopPropagation();
-      navigate(active.swiper, active.mediaRoot, direction);
-
-      if (cinemaState) refreshCinemaImage();
-      else if (active.ui) {
-        const idx = active.swiper?.realIndex ?? active.swiper?.activeIndex ?? 0;
-        setActiveThumb(active.ui, active, idx);
-      }
+      refreshViewer();
+      revealThumbs(active);
     }, true);
   }
 
-  function bindCarouselKeyboard(state) {
-    bindGlobalKeyboard();
-    window.__kdeCarouselActiveState = state;
-  }
-
-  function bindCinemaOpen(state) {
-    state.mediaRoot.addEventListener('click', (event) => {
-      const img = event.target.closest('.image-viewer img');
+  function bindCinemaOpen(state, selector) {
+    const root = state.mediaRoot || state.browseRoot;
+    root.addEventListener('click', (event) => {
+      const img = event.target.closest(selector);
       if (!img) return;
+
+      if (state.kind === 'browse') {
+        const itemEl = event.target.closest('.product-browse-item-picture');
+        const idx = state.browseItems.findIndex((item) => item.element === itemEl);
+        if (idx >= 0) state.browseIndex = idx;
+      }
 
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -608,32 +781,34 @@
     ENHANCED.add(container);
 
     const swiper = container.swiper || container.__swiper__;
-    const ui = buildThumbnailBar(mediaRoot, swiper, slides, (index) => {
-      swiper?.slideTo(index);
-      const idx = swiper?.realIndex ?? swiper?.activeIndex ?? index;
-      setActiveThumb(ui, { swiper, slides }, idx);
-    });
-
     const state = {
+      kind: 'product',
       mediaRoot,
       container,
       swiper,
       slides,
-      ui,
+      slideIndex: 0,
+      ui: null,
       cinemaUi: null,
     };
 
-    bindCarouselKeyboard(state);
-    bindCinemaOpen(state);
+    state.ui = buildThumbnailBar(mediaRoot, state.slides, (index) => {
+      goToSlide(state, index);
+      refreshViewer();
+      revealThumbs(state);
+    });
 
-    if (ui) {
-      bindThumbAutohide(ui.bar, mediaRoot);
+    if (state.ui) {
+      state.ui.autohide = bindThumbAutohide(state.ui.bar, mediaRoot);
     }
 
+    bindGlobalKeyboard();
+    bindCinemaOpen(state, '.image-viewer img');
+
     const sync = () => {
-      const idx = swiper?.realIndex ?? swiper?.activeIndex ?? 0;
-      if (ui) setActiveThumb(ui, state, idx);
-      if (cinemaState === state) refreshCinemaImage();
+      state.slideIndex = currentSlideIndex(state);
+      setActiveThumb(state.ui, state, state.slideIndex);
+      if (cinemaState === state) refreshViewer();
     };
 
     sync();
@@ -664,8 +839,45 @@
     mediaRoot.addEventListener('focusin', () => setCarouselActive(true));
   }
 
+  function enhanceBrowsePage(browseRoot) {
+    if (!browseRoot || BROWSE_ENHANCED.has(browseRoot)) return;
+
+    const browseItems = collectBrowseItems();
+    if (!browseItems.length) return;
+
+    BROWSE_ENHANCED.add(browseRoot);
+
+    const state = {
+      kind: 'browse',
+      browseRoot,
+      browseItems,
+      browseIndex: 0,
+      slides: [],
+      slideIndex: 0,
+      ui: null,
+      cinemaUi: null,
+    };
+
+    bindGlobalKeyboard();
+    bindCinemaOpen(state, '.product-browse-item-picture img, .item-picture-cover img');
+
+    window.__kdeBrowseActiveState = state;
+
+    browseRoot.addEventListener('mouseover', (event) => {
+      const itemEl = event.target.closest('.product-browse-item-picture');
+      if (!itemEl) return;
+      const idx = state.browseItems.findIndex((item) => item.element === itemEl);
+      if (idx >= 0) {
+        state.browseIndex = idx;
+        window.__kdeBrowseActiveState = state;
+      }
+    }, { passive: true });
+  }
+
   function scan(root = document) {
     root.querySelectorAll(MEDIA_ROOT).forEach(enhanceMediaSlider);
+    const browse = root.querySelector(BROWSE_ROOT) || (root.matches?.(BROWSE_ROOT) ? root : null);
+    if (browse) enhanceBrowsePage(browse);
   }
 
   function boot() {
@@ -683,7 +895,13 @@
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
           if (!(node instanceof Element)) continue;
-          if (node.matches?.(MEDIA_ROOT) || node.querySelector?.(MEDIA_ROOT)) {
+          if (
+            node.matches?.(MEDIA_ROOT)
+            || node.querySelector?.(MEDIA_ROOT)
+            || node.matches?.(BROWSE_ROOT)
+            || node.querySelector?.(BROWSE_ROOT)
+            || node.matches?.('.product-browse-item-picture')
+          ) {
             needsScan = true;
             break;
           }
@@ -694,14 +912,6 @@
     });
 
     observer.observe(document.documentElement, { childList: true, subtree: true });
-
-    const stopWhenReady = setInterval(() => {
-      const ready = document.querySelector(`${MEDIA_ROOT} .swiper-initialized`);
-      if (ready) {
-        observer.disconnect();
-        clearInterval(stopWhenReady);
-      }
-    }, 250);
   }
 
   if (document.readyState === 'loading') {
