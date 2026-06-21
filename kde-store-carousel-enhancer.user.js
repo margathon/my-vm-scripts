@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KDE Store — Preview Thumbnails & Vim Keys
 // @namespace    https://github.com/margathon/my-vm-scripts
-// @version      1.3.1
+// @version      1.3.2
 // @description  Thumbnail preview strip, vim-style navigation, and a fullscreen cinema overlay for KDE Store previews
 // @author       margathon
 // @match        https://store.kde.org/*
@@ -287,7 +287,8 @@
       opacity: 0.35;
     }
 
-    .product-browse-item-picture.kde-browse-active {
+    .product-browse-item-picture.kde-browse-active,
+    .product-browse-item-row.kde-browse-active {
       outline: 2px solid rgba(61, 174, 233, 0.75);
       outline-offset: 2px;
       border-radius: 8px;
@@ -343,7 +344,7 @@
 
   function upscaleImageUrl(url) {
     if (!url || !url.includes('/cache/')) return url;
-    return url.replace(/\/cache\/\d+x\d+\/img\//, '/img/');
+    return url.replace(/\/cache\/\d+x\d+(?:-\d+)?\/img\//, '/img/');
   }
 
   function preloadImage(src) {
@@ -407,23 +408,53 @@
       .filter(Boolean);
   }
 
+  function parseBrowseItem(highlightEl, link, img, titleEl) {
+    const href = link?.href;
+    const id = href?.match(/\/p\/(\d+)/)?.[1];
+    if (!id || !img?.src) return null;
+
+    const rawTitle = titleEl?.textContent?.replace(/\s+/g, ' ').trim()
+      || img.alt?.trim()
+      || `Product ${id}`;
+
+    return {
+      id,
+      href,
+      title: rawTitle.replace(/\s+\d+(?:\.\d+)*$/, '').trim() || rawTitle,
+      previewSrc: img.currentSrc || img.src,
+      element: highlightEl,
+    };
+  }
+
   function collectBrowseItems() {
-    return [...document.querySelectorAll('.product-browse-item-picture')]
-      .map((element, index) => {
-        const link = element.querySelector('a[href*="/p/"]');
-        const img = element.querySelector('img');
-        const id = link?.href.match(/\/p\/(\d+)/)?.[1];
-        if (!id || !img?.src) return null;
-        return {
-          index,
-          id,
-          href: link.href,
-          title: element.querySelector('h2')?.textContent?.trim() || `Product ${id}`,
-          previewSrc: img.currentSrc || img.src,
-          element,
-        };
-      })
-      .filter(Boolean);
+    const items = [];
+    const seen = new Set();
+
+    for (const element of document.querySelectorAll('.product-browse-item-picture')) {
+      const item = parseBrowseItem(
+        element,
+        element.querySelector('a[href*="/p/"]'),
+        element.querySelector('.item-picture-cover img, img'),
+        element.querySelector('h2'),
+      );
+      if (!item || seen.has(item.id)) continue;
+      seen.add(item.id);
+      items.push({ ...item, index: items.length });
+    }
+
+    for (const element of document.querySelectorAll('.product-browse-item-row')) {
+      const item = parseBrowseItem(
+        element,
+        element.querySelector('a.product-browse-item-wrapper[href*="/p/"]'),
+        element.querySelector('.product-browse-image img, .product-browse-item img'),
+        element.querySelector('.title h2, h2'),
+      );
+      if (!item || seen.has(item.id)) continue;
+      seen.add(item.id);
+      items.push({ ...item, index: items.length });
+    }
+
+    return items;
   }
 
   async function fetchProductGallery(productId) {
@@ -839,14 +870,22 @@
     }, true);
   }
 
-  function bindCinemaOpen(state, selector) {
+  function bindCinemaOpen(state) {
     const root = state.mediaRoot || state.browseRoot;
     root.addEventListener('click', (event) => {
-      const img = event.target.closest(selector);
-      if (!img) return;
+      let img = null;
+      let itemEl = null;
 
       if (state.kind === 'browse') {
-        const itemEl = event.target.closest('.product-browse-item-picture');
+        img = event.target.closest('.product-browse-image img, .item-picture-cover img, .product-browse-item-picture img');
+        itemEl = img?.closest('.product-browse-item-row, .product-browse-item-picture');
+      } else {
+        img = event.target.closest('.image-viewer img');
+      }
+
+      if (!img) return;
+
+      if (state.kind === 'browse' && itemEl) {
         const idx = state.browseItems.findIndex((item) => item.element === itemEl);
         if (idx >= 0) state.browseIndex = idx;
       }
@@ -890,7 +929,7 @@
     }
 
     bindGlobalKeyboard();
-    bindCinemaOpen(state, '.image-viewer img');
+    bindCinemaOpen(state);
 
     const sync = () => {
       state.slideIndex = currentSlideIndex(state);
@@ -927,7 +966,14 @@
   }
 
   function enhanceBrowsePage(browseRoot) {
-    if (!browseRoot || BROWSE_ENHANCED.has(browseRoot)) return;
+    if (!browseRoot) return;
+
+    if (BROWSE_ENHANCED.has(browseRoot)) {
+      if (window.__kdeBrowseActiveState?.browseRoot === browseRoot) {
+        window.__kdeBrowseActiveState.browseItems = collectBrowseItems();
+      }
+      return;
+    }
 
     const browseItems = collectBrowseItems();
     if (!browseItems.length) return;
@@ -946,13 +992,13 @@
     };
 
     bindGlobalKeyboard();
-    bindCinemaOpen(state, '.product-browse-item-picture img, .item-picture-cover img');
+    bindCinemaOpen(state);
 
     window.__kdeBrowseActiveState = state;
     browseItems.slice(0, 4).forEach((item) => loadGallery(item.id));
 
     browseRoot.addEventListener('mouseover', (event) => {
-      const itemEl = event.target.closest('.product-browse-item-picture');
+      const itemEl = event.target.closest('.product-browse-item-row, .product-browse-item-picture');
       if (!itemEl) return;
       const idx = state.browseItems.findIndex((item) => item.element === itemEl);
       if (idx >= 0) {
@@ -989,6 +1035,8 @@
             || node.matches?.(BROWSE_ROOT)
             || node.querySelector?.(BROWSE_ROOT)
             || node.matches?.('.product-browse-item-picture')
+            || node.matches?.('.product-browse-item-row')
+            || node.querySelector?.('.product-browse-item-row')
           ) {
             needsScan = true;
             break;
