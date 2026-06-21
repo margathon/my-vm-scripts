@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KDE Store — Preview Thumbnails & Vim Keys
 // @namespace    https://github.com/margathon/my-vm-scripts
-// @version      1.3.0
+// @version      1.3.1
 // @description  Thumbnail preview strip, vim-style navigation, and a fullscreen cinema overlay for KDE Store previews
 // @author       margathon
 // @match        https://store.kde.org/*
@@ -280,6 +280,11 @@
       object-position: center center;
       user-select: none;
       -webkit-user-drag: none;
+      transition: opacity 180ms ease;
+    }
+
+    .kde-cinema-image.kde-image-loading {
+      opacity: 0.35;
     }
 
     .product-browse-item-picture.kde-browse-active {
@@ -315,6 +320,8 @@
 
   let cinemaState = null;
   let overlayEl = null;
+  const galleryCache = new Map();
+  let pendingImageLoad = 0;
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -335,8 +342,53 @@
   }
 
   function upscaleImageUrl(url) {
-    if (!url) return url;
-    return url.replace(/\/cache\/\d+x\d+\//, '/img/').replace('://images.pling.com/cache/', '://images.pling.com/img/');
+    if (!url || !url.includes('/cache/')) return url;
+    return url.replace(/\/cache\/\d+x\d+\/img\//, '/img/');
+  }
+
+  function preloadImage(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(src);
+      img.onerror = () => reject(new Error(`Failed to load ${src}`));
+      img.src = src;
+    });
+  }
+
+  function preloadSlides(slides) {
+    slides.forEach(({ src }) => {
+      preloadImage(src).catch(() => {});
+    });
+  }
+
+  async function loadGallery(productId) {
+    const cached = galleryCache.get(productId);
+    if (cached) {
+      return cached instanceof Promise ? cached : Promise.resolve(cached);
+    }
+
+    const promise = fetchProductGallery(productId)
+      .then((result) => {
+        const entry = result || { title: '', slides: null };
+        galleryCache.set(productId, entry);
+        if (entry.slides?.length) preloadSlides(entry.slides);
+        return entry;
+      })
+      .catch(() => {
+        galleryCache.delete(productId);
+        return null;
+      });
+
+    galleryCache.set(productId, promise);
+    return promise;
+  }
+
+  function prefetchBrowseGalleries(state) {
+    if (state.kind !== 'browse') return;
+    for (const offset of [1, -1, 2, -2]) {
+      const item = state.browseItems[state.browseIndex + offset];
+      if (item) loadGallery(item.id);
+    }
   }
 
   function mediaFromSlide(slide) {
@@ -367,7 +419,7 @@
           id,
           href: link.href,
           title: element.querySelector('h2')?.textContent?.trim() || `Product ${id}`,
-          previewSrc: upscaleImageUrl(img.currentSrc || img.src),
+          previewSrc: img.currentSrc || img.src,
           element,
         };
       })
@@ -585,15 +637,36 @@
     state.browseItems[state.browseIndex]?.element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
+  function setCinemaImageSrc(src) {
+    const image = overlayEl?.querySelector('.kde-cinema-image');
+    if (!image || !src) return;
+
+    if (image.dataset.loadedSrc === src) return;
+
+    const loadId = ++pendingImageLoad;
+    image.classList.add('kde-image-loading');
+
+    preloadImage(src)
+      .then((okSrc) => {
+        if (loadId !== pendingImageLoad || cinemaState == null) return;
+        image.src = okSrc;
+        image.dataset.loadedSrc = okSrc;
+        image.classList.remove('kde-image-loading');
+      })
+      .catch(() => {
+        if (loadId !== pendingImageLoad) return;
+        image.classList.remove('kde-image-loading');
+      });
+  }
+
   function refreshViewer() {
     if (!cinemaState || !overlayEl) return;
     const state = cinemaState;
     const idx = currentSlideIndex(state);
     const slide = state.slides[idx];
-    const image = overlayEl.querySelector('.kde-cinema-image');
     const title = overlayEl.querySelector('.kde-cinema-title');
 
-    if (slide && image) image.src = slide.src;
+    if (slide) setCinemaImageSrc(slide.src);
     if (title) {
       if (state.kind === 'browse') {
         title.textContent = `${state.title || ''} (${state.browseIndex + 1}/${state.browseItems.length})`;
@@ -611,13 +684,24 @@
     if (!item) return;
 
     state.title = item.title;
-    state.slides = [{ src: item.previewSrc }];
     state.slideIndex = 0;
     updateBrowseHighlight(state);
+
+    const cached = galleryCache.get(item.id);
+    if (cached && !(cached instanceof Promise) && cached.slides?.length) {
+      state.slides = cached.slides;
+      if (cached.title) state.title = cached.title;
+      rebuildCinemaThumbs(state);
+      refreshViewer();
+      prefetchBrowseGalleries(state);
+      return;
+    }
+
+    state.slides = [{ src: item.previewSrc }];
     rebuildCinemaThumbs(state);
     refreshViewer();
 
-    const gallery = await fetchProductGallery(item.id);
+    const gallery = await loadGallery(item.id);
     if (cinemaState !== state) return;
     if (gallery?.slides?.length) {
       state.slides = gallery.slides;
@@ -625,6 +709,7 @@
       rebuildCinemaThumbs(state);
       refreshViewer();
     }
+    prefetchBrowseGalleries(state);
   }
 
   function goToSlide(state, index) {
@@ -665,6 +750,8 @@
     } else {
       refreshViewer();
     }
+
+    prefetchBrowseGalleries(state);
 
     overlay.classList.add('is-open');
     document.body.classList.add('kde-cinema-open');
@@ -862,6 +949,7 @@
     bindCinemaOpen(state, '.product-browse-item-picture img, .item-picture-cover img');
 
     window.__kdeBrowseActiveState = state;
+    browseItems.slice(0, 4).forEach((item) => loadGallery(item.id));
 
     browseRoot.addEventListener('mouseover', (event) => {
       const itemEl = event.target.closest('.product-browse-item-picture');
