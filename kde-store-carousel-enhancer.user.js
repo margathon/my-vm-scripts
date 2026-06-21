@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KDE Store — Preview Thumbnails & Vim Keys
 // @namespace    https://github.com/margathon/my-vm-scripts
-// @version      1.4.0
+// @version      1.4.1
 // @description  Thumbnail preview strip, vim-style navigation, fullscreen cinema overlay, and browse enhancements for KDE Store
 // @author       margathon
 // @match        https://store.kde.org/*
@@ -522,9 +522,9 @@
 
   function parseBrowsePageData(data) {
     const params = new URLSearchParams(location.search);
-    const pageLimit = data.pageLimit || data.products?.length || 10;
-    const total = data.totalcount || data.products?.length || 0;
-    const page = data.page || Number.parseInt(params.get('page') || '1', 10);
+    const pageLimit = Number(data.pageLimit) || data.products?.length || 10;
+    const total = Number(data.totalcount) || data.products?.length || 0;
+    const page = Number(data.page) || Number.parseInt(params.get('page') || '1', 10);
     const maxPage = Math.max(1, Math.ceil(total / pageLimit));
 
     return {
@@ -597,7 +597,9 @@
   function maybePrefetchBrowsePage(state) {
     if (!state.browseHasMore || state.browseLoading) return;
     if (state.browseIndex >= state.browseItems.length - 2) {
-      appendNextBrowsePage(state);
+      appendNextBrowsePage(state).catch(() => {
+        state.browseLoading = false;
+      });
     }
   }
 
@@ -874,9 +876,9 @@
   function updateBrowseHighlight(state) {
     if (state.kind !== 'browse') return;
     state.browseItems.forEach((item, i) => {
-      item.element.classList.toggle('kde-browse-active', i === state.browseIndex);
+      item.element?.classList.toggle('kde-browse-active', i === state.browseIndex);
     });
-    state.browseItems[state.browseIndex]?.element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    state.browseItems[state.browseIndex]?.element?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   function setCinemaImageSrc(src) {
@@ -1014,7 +1016,7 @@
   function closeCinema() {
     if (cinemaState?.kind === 'browse') {
       cinemaState.browseItems.forEach((item) => {
-        item.element.classList.remove('kde-browse-active');
+        item.element?.classList.remove('kde-browse-active');
       });
     }
     overlayEl?.classList.remove('is-open');
